@@ -117,15 +117,15 @@ local lastNormalFov = nil
 
 local Options = {
     EspHighlight = false, EspNames = false, EspHealth = false, EspDistance = false,
-    EspTracers = false, EspTeam = false, ShowEspIcon = false, TeamCheck = false,
-    AntiFriends = false, MaxDistance = 500, Whitelist = {}
+    EspTracers = false, ShowEspIcon = false, TeamCheck = false,
+    AntiFriends = false, MaxDistance = 500, Whitelist = {}, Blacklist = {}
 }
 
 local FriendsCache, ActiveEspObjects, ActiveTracers = {}, {}, {}
 local PlayerTracking = {}
 local Cache_MyTeam, Cache_MyNeutral = nil, false
 
-local WhitelistDropdown, TpDropdown, FlingToggle, SpectateToggle, WaypointDropdown = nil, nil, nil, nil, nil
+local WhitelistDropdown, BlacklistDropdown, TpDropdown, FlingToggle, SpectateToggle, WaypointDropdown = nil, nil, nil, nil, nil, nil
 local RenameInput, KeybindInput, KeybindFunctionDropdown, CurrentKeybindsDropdown = nil, nil, nil, nil
 
 local WalkSpeedToggleComponent, JumpPowerToggleComponent, InfJumpToggleComponent, FlyToggleComponent, NoclipToggleComponent = nil, nil, nil, nil, nil
@@ -946,10 +946,11 @@ local function hideEsp(player, esp, tracerData)
 end
 
 local function updateEspState()
-    local isEspActive = Options.EspHighlight or Options.EspNames or Options.EspHealth or Options.EspDistance or Options.EspTracers or Options.EspTeam or Options.ShowEspIcon
+    local isEspActive = Options.EspHighlight or Options.EspNames or Options.EspHealth or Options.EspDistance or Options.EspTracers or Options.ShowEspIcon
     
     if isEspActive then
         if not espConnection then
+            local next = next
             espConnection = RunService.RenderStepped:Connect(function()
                 Cache_MyTeam, Cache_MyNeutral = LocalPlayer.Team, (LocalPlayer.Neutral == true)
                 local myChar = LocalPlayer.Character
@@ -957,6 +958,8 @@ local function updateEspState()
                 local myPos = (myHrp and myHrp.Position) or Camera.CFrame.Position
                 local viewportCenter = Camera.ViewportSize * 0.5
                 local maxDistSq = Options.MaxDistance * Options.MaxDistance
+
+                local hasBlacklist = (next(Options.Blacklist) ~= nil)
 
                 local playersAll = Players:GetPlayers()
                 for i = 1, #playersAll do
@@ -1004,7 +1007,12 @@ local function updateEspState()
                         continue 
                     end
 
-                    local isAllowedVisual = Options.EspTeam or (not (Options.TeamCheck and ((player.Neutral and Cache_MyNeutral) or (player.Team ~= nil and player.Team == Cache_MyTeam))) and not (Options.AntiFriends and FriendsCache[player.Name]) and not Options.Whitelist[player.Name])
+                    if hasBlacklist and not Options.Blacklist[player.Name] then
+                        hideEsp(player, esp, tracerData)
+                        continue
+                    end
+
+                    local isAllowedVisual = not (Options.TeamCheck and ((player.Neutral and Cache_MyNeutral) or (player.Team ~= nil and player.Team == Cache_MyTeam))) and not (Options.AntiFriends and FriendsCache[player.Name]) and not Options.Whitelist[player.Name]
 
                     if not isAllowedVisual then 
                         hideEsp(player, esp, tracerData)
@@ -1276,12 +1284,48 @@ EspTab:CreateToggle({ Name = "Health", CurrentValue = false, Flag = "Esp_Health"
 EspTab:CreateToggle({ Name = "Distance", CurrentValue = false, Flag = "Esp_Distance", Callback = function(v) Options.EspDistance = v; updateEspState() end })
 EspTab:CreateToggle({ Name = "Tracers", CurrentValue = false, Flag = "Esp_Tracers", Callback = function(v) Options.EspTracers = v; updateEspState() end })
 EspTab:CreateToggle({ Name = "Icon", CurrentValue = false, Flag = "Esp_Icon", Callback = function(v) Options.ShowEspIcon = v; updateEspState() end })
-EspTab:CreateToggle({ Name = "Team ESP", CurrentValue = false, Flag = "Esp_Team_Toggle", Callback = function(v) Options.EspTeam = v; updateEspState() end })
 EspTab:CreateSection("Filters")
 EspTab:CreateToggle({ Name = "Team Check", CurrentValue = false, Flag = "TeamCheck_Toggle", Callback = function(v) Options.TeamCheck = v; updateEspState() end })
 EspTab:CreateToggle({ Name = "Anti-Friends", CurrentValue = false, Flag = "AntiFriends_Toggle", Callback = function(v) Options.AntiFriends = v; updateEspState() end })
 EspTab:CreateSlider({ Name = "Max Distance", Range = {10, 2000}, Increment = 25, Suffix = " studs", CurrentValue = 500, Flag = "Distance_Slider", Callback = function(v) Options.MaxDistance = v; updateEspState() end })
-WhitelistDropdown = EspTab:CreateDropdown({ Name = "Whitelist", Options = {}, CurrentOption = {}, MultipleOptions = true, Flag = "Whitelist_Drop", Callback = function(opts) table.clear(Options.Whitelist); for i = 1, #opts do Options.Whitelist[opts[i]] = true end; updateEspState() end })
+WhitelistDropdown = EspTab:CreateDropdown({ 
+    Name = "Whitelist", 
+    Options = {}, 
+    CurrentOption = {}, 
+    MultipleOptions = true, 
+    Flag = "Whitelist_Drop", 
+    Callback = function(opts) 
+        table.clear(Options.Whitelist) 
+        for i = 1, #opts do 
+            local name = opts[i]
+            if Options.Blacklist[name] then
+                Rayfield:Notify({Title = "Ошибка", Content = "ошибка игрок уже выбран в Черный список", Duration = 3, Image = "x"})
+            else
+                Options.Whitelist[name] = true 
+            end
+        end 
+        updateEspState() 
+    end 
+})
+BlacklistDropdown = EspTab:CreateDropdown({
+    Name = "Blacklist",
+    Options = {},
+    CurrentOption = {},
+    MultipleOptions = true,
+    Flag = "Blacklist_Drop",
+    Callback = function(opts)
+        table.clear(Options.Blacklist)
+        for i = 1, #opts do
+            local name = opts[i]
+            if Options.Whitelist[name] then
+                Rayfield:Notify({Title = "Ошибка", Content = "ошибка игрок уже выбран в Белый список", Duration = 3, Image = "x"})
+            else
+                Options.Blacklist[name] = true
+            end
+        end
+        updateEspState()
+    end
+})
 
 local OtherTab = Window:CreateTab("Others", "list")
 
@@ -1479,7 +1523,7 @@ OtherTab:CreateButton({
 })
 
 OtherTab:CreateSection("Combat")
-FlingToggle = OtherTab:CreateToggle({ Name = "Enable Fling", CurrentValue = false, Flag = "Fling_Toggle", Callback = setFlingEnabled })
+FlingToggle = OtherTab:CreateToggle({ Name = "enable fling (work with target)", CurrentValue = false, Flag = "Fling_Toggle", Callback = setFlingEnabled })
 Spin360ToggleComponent = OtherTab:CreateToggle({ Name = "Spin 360", CurrentValue = false, Flag = "Spin360_Toggle", Callback = setSpinEnabled })
 OtherTab:CreateSlider({ Name = "Spin 360 Duration", Range = {0.1, 2}, Increment = 0.1, Suffix = " sec", CurrentValue = 0.5, Flag = "Spin360_Duration", Callback = function(v) spinDuration = v end })
 
@@ -1687,6 +1731,7 @@ local function refreshDropdowns()
     local names = getActivePlayerNames()
     pcall(function()
         if WhitelistDropdown then WhitelistDropdown:Refresh(names, true) end
+        if BlacklistDropdown then BlacklistDropdown:Refresh(names, true) end
         if TpDropdown then TpDropdown:Refresh(names, true) end
     end)
 end
@@ -1724,6 +1769,7 @@ end))
 Lifecycle:AddConnection(Players.PlayerRemoving:Connect(function(player)
     FriendsCache[player.Name] = nil
     Options.Whitelist[player.Name] = nil
+    Options.Blacklist[player.Name] = nil
     if selectedTpPlayer == player.Name then
         selectedTpPlayer, loopTpEnabled = "", false
         if spectateEnabled and SpectateToggle then SpectateToggle:Set(false) end
@@ -1738,6 +1784,9 @@ pcall(function()
     if WhitelistDropdown then 
         WhitelistDropdown:Set({})  
     end 
+    if BlacklistDropdown then
+        BlacklistDropdown:Set({})
+    end
     if TpDropdown then 
         TpDropdown:Set({""}) 
     end 
@@ -1762,6 +1811,7 @@ pcall(function()
     selectedCurrentBind = ""
     
     table.clear(Options.Whitelist) 
+    table.clear(Options.Blacklist)
     table.clear(savedPositionsList)
     table.clear(savedPositionsMap)
     table.clear(functionToBinds)
